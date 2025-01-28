@@ -1,11 +1,16 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from decouple import config
-import pywhatkit as kit
-import time
 import sqlite3
 import re
+import time
 
+# Настройка SQLite
 conn = sqlite3.connect("whatsapp_bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -23,6 +28,40 @@ CREATE TABLE IF NOT EXISTS messages (
 """)
 conn.commit()
 
+# Настройка Selenium
+options = Options()
+options.add_argument("--user-data-dir=./whatsapp_session")  # Путь для сохранения сессии
+options.add_argument("--profile-directory=Default")
+driver_service = Service(executable_path="chromedriver")  # Укажите путь к драйверу
+
+def start_whatsapp_session():
+    driver = webdriver.Chrome(service=driver_service, options=options)
+    driver.get("https://web.whatsapp.com")
+    input("Сканируйте QR-код, затем нажмите Enter...")
+    return driver
+
+def send_whatsapp_messages(driver, numbers, message):
+    for number in numbers:
+        try:
+            url = f"https://wa.me/{number}"
+            driver.get(url)
+            time.sleep(5)
+
+            # Нажимаем кнопку "Продолжить чат"
+            continue_button = driver.find_element(By.XPATH, "//a[contains(@href, 'action=chat')]")
+            continue_button.click()
+            time.sleep(5)
+
+            # Вводим сообщение
+            message_box = driver.find_element(By.XPATH, "//div[@title='Напишите сообщение']")
+            message_box.send_keys(message)
+            message_box.send_keys(Keys.RETURN)
+
+            time.sleep(2)  # Небольшая пауза между сообщениями
+        except Exception as e:
+            print(f"Ошибка при отправке на номер {number}: {e}")
+
+# Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [KeyboardButton("Добавить номер"), KeyboardButton("Установить сообщение")],
@@ -57,9 +96,13 @@ async def show_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"Текущее сообщение:\n{message[0]}")
 
+async def delete_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Отправь номер, который хочешь удалить:")
+    context.user_data["state"] = "waiting_for_number_deletion"
+
 async def send_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT number FROM phone_numbers")
-    numbers = cursor.fetchall()
+    numbers = [row[0] for row in cursor.fetchall()]
     cursor.execute("SELECT message FROM messages ORDER BY id DESC LIMIT 1")
     message = cursor.fetchone()
 
@@ -72,18 +115,12 @@ async def send_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message = message[0]
     await update.message.reply_text("Начинаю рассылку...")
-    for number in numbers:
-        try:
-            kit.sendwhatmsg_instantly(f"{number[0]}", message, wait_time=15, tab_close=True, close_time=5)
-            time.sleep(5)
-        except Exception as e:
-            await update.message.reply_text(f"Ошибка отправки на {number[0]}: {e}")
+
+    driver = start_whatsapp_session()
+    send_whatsapp_messages(driver, numbers, message)
+    driver.quit()
 
     await update.message.reply_text("Рассылка завершена!")
-
-async def delete_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отправь номер, который хочешь удалить:")
-    context.user_data["state"] = "waiting_for_number_deletion"
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
@@ -97,7 +134,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except sqlite3.IntegrityError:
                 await update.message.reply_text(f"Номер {number} уже существует.")
         else:
-            await update.message.reply_text("Номер не соответствует формату +996xxxxxxxxx. Попробуй ещё раз.")
+            await update.message.reply_text("Номер не соответствует формату +996XXXXXXXXX. Попробуй ещё раз.")
         context.user_data["state"] = None
     elif state == "waiting_for_message":
         cursor.execute("INSERT INTO messages (message) VALUES (?)", (update.message.text,))
