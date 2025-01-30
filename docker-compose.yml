@@ -1,0 +1,9 @@
+services:
+  bot:
+    build: .
+    container_name: telegram_whatsapp_bot
+    environment:
+      - TOKEN=7844125205:AAGFY7bvoKv6beaId1eKihahbhKsux73sfw
+    volumes:
+      - ./whatsapp_bot.db:/app/whatsapp_bot.db
+    restart: unless-stopped

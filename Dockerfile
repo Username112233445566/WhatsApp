@@ -1,10 +1,10 @@
-FROM python:3.12-slim
+FROM python:3.11
 
 WORKDIR /app
 
-COPY . .
+COPY requirements.txt ./
+COPY bot.py ./
 
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "main.py"]
+CMD ["python", "bot.py"]
